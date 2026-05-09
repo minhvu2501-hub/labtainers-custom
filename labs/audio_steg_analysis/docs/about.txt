@@ -1,0 +1,12 @@
+Audio Steganography Analysis Lab
+
+This lab teaches students to perform digital audio forensics by analyzing
+four anonymous WAV audio files to identify which steganographic technique
+(if any) was used to hide data within each file.
+
+Students will use statistical analysis tools (LSB distribution, chi-square
+tests, MSE, SNR, Shannon entropy) to distinguish:
+  - The original unmodified cover audio
+  - Audio with 1-bit LSB steganography
+  - Audio with 4-bit LSB steganography
+  - Audio with hash-based (random position) LSB steganography

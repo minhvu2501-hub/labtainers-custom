@@ -1,0 +1,57 @@
+#
+# Labtainer Dockerfile  -  audio_steg_analysis lab
+#
+# Base image: labtainer.base2 includes:
+#   build-essential  expect  file  gcc-multilib  gdb  iputils-ping
+#   less  man  net-tools  openssh-client  python3  sudo  vim  zip  hexedit
+#
+ARG registry
+FROM $registry/labtainer.base2
+
+ARG lab
+ARG labdir
+ARG imagedir
+ARG user_name
+ARG password
+ARG apt_source
+ARG version
+LABEL version=$version
+ENV APT_SOURCE $apt_source
+RUN /usr/bin/apt-source.sh
+RUN sed -i 's/http:/https:/g' /etc/apt/sources.list
+
+# ── Install required packages ────────────────────────────────────
+RUN apt-get update -y && apt-get install -y --no-install-recommends \
+    python3 \
+    python3-pip \
+    sox \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── System files ─────────────────────────────────────────────────
+ADD $labdir/$imagedir/sys_tar/sys.tar /
+ADD $labdir/sys_$lab.tar.gz /
+
+# ── Create user ──────────────────────────────────────────────────
+RUN useradd -ms /bin/bash $user_name
+RUN echo "$user_name:$password" | chpasswd
+RUN adduser $user_name sudo
+
+# ── Switch to user and install home files ────────────────────────
+USER $user_name
+ENV HOME /home/$user_name
+
+WORKDIR /home/$user_name
+
+RUN touch $HOME/.bash_history && \
+    chmod 666 $HOME/.bash_history
+ADD $labdir/$imagedir/home_tar/home.tar $HOME
+RUN rm -f $HOME/home.tar
+ADD $labdir/$lab.tar.gz $HOME
+
+RUN echo 'export HISTFILE=~/.bash_history' >> $HOME/.bashrc && \
+    echo 'export PROMPT_COMMAND="history -a"' >> $HOME/.bashrc
+RUN echo 'export HISTFILE=$HOME/.bash_history' >> /home/$user_name/.bashrc && \
+    echo 'export PROMPT_COMMAND="history -a"' >> /home/$user_name/.bashrc
+# ── Startup ──────────────────────────────────────────────────────
+USER root
+CMD ["/bin/bash", "-c", "exec /sbin/init --log-target=journal 3>&1"]
