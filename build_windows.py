@@ -18,11 +18,21 @@ import tarfile, os, io, wave, struct, math, random, hashlib
 LAB_NAME = "gateway_content_disarm"
 BASE_DIR  = os.path.dirname(os.path.abspath(__file__))
 
-# ── WAV generation (inline copy from gen_lofi_chill.py) ──────────
+# ── WAV generation (mirrors gen_lofi_chill.py) ───────────────────
+import zlib
 
-PAYLOAD_LSB1 = "C2=185.22.10.4:4444" * 300 + "###END###"
-PAYLOAD_LSB4 = ("powershell -enc " + "A" * 200) * 20 + "###END###"
-PAYLOAD_HASH = "TOKEN=ABCD-1234-XYZ" * 300 + "###END###"
+def xor(data, key):
+    return bytes([b ^ key[i % len(key)] for i, b in enumerate(data)])
+
+_KEY1 = b"\x4B\x7A\x3F\x91"
+_KEY2 = b"\xAB\xCD\xEF\x12"
+_C2   = b"C2=185.22.10.4:4444|interval=60|campaign=APT2024|cmd=whoami"
+_TOK  = b"API_TOKEN=XyZ-9a2b-Kp7q|sig=0xDEADBEEF|exp=2099"
+
+_rng_study = random.Random(0xDEADBEEF)
+PAYLOAD_EVENING = xor(_C2, _KEY1)
+PAYLOAD_STUDY   = bytes([_rng_study.randint(0, 255) for _ in range(10000)])
+PAYLOAD_CHILL   = xor(_TOK, _KEY2)
 
 
 def generate_cover_wav_bytes():
@@ -30,16 +40,35 @@ def generate_cover_wav_bytes():
     frames = []
     for i in range(6 * 44100):
         t = i / 44100
-        value = (math.sin(2*math.pi*261.63*t)*0.40 +
-                 math.sin(2*math.pi*329.63*t)*0.20 +
-                 math.sin(2*math.pi*392.00*t)*0.15 +
-                 math.sin(2*math.pi*130.81*t)*0.10 +
-                 rng.uniform(-0.05, 0.05))
-        sample = int(round(value * 26000 / 2) * 2)
-        sample = max(-32768, min(32766, sample))
-        if rng.random() < 0.28:
-            sample = min(32767, sample + 1)
-        frames.append(struct.pack("<h", sample))
+        v = (math.sin(2*math.pi*261.63*t)*0.40 +
+             math.sin(2*math.pi*329.63*t)*0.20 +
+             math.sin(2*math.pi*392.00*t)*0.15 +
+             math.sin(2*math.pi*523.25*t)*0.08 +
+             rng.gauss(0, 0.04))
+        s = int(round(v * 26000 / 2) * 2)
+        s = max(-32768, min(32766, s))
+        if rng.random() < 0.30:
+            s = min(32767, s + 1)
+        frames.append(struct.pack("<h", s))
+    buf = io.BytesIO()
+    with wave.open(buf, "w") as f:
+        f.setnchannels(1); f.setsampwidth(2); f.setframerate(44100)
+        f.writeframes(b"".join(frames))
+    return buf.getvalue()
+
+
+def make_noisy_radio():
+    rng = random.Random(99)
+    frames = []
+    for i in range(6 * 44100):
+        t = i / 44100
+        v = math.sin(2*math.pi*440.0*t)*0.9 + rng.gauss(0, 0.5)
+        v = max(-1.0, min(1.0, v))
+        s = int(round(int(v * 32000) / 2) * 2)
+        s = max(-32768, min(32766, s))
+        if rng.random() < 0.31:
+            s = min(32767, s + 1)
+        frames.append(struct.pack("<h", s))
     buf = io.BytesIO()
     with wave.open(buf, "w") as f:
         f.setnchannels(1); f.setsampwidth(2); f.setframerate(44100)
@@ -61,43 +90,57 @@ def to_wav(raw, params):
     return buf.getvalue()
 
 
-def t2b(text): return "".join(format(ord(c), "08b") for c in text)
+def cycled_bits(payload, n):
+    bits = [int(b) for byte in payload for b in format(byte, "08b")]
+    out = []
+    while len(out) < n:
+        out.extend(bits)
+    return out[:n]
 
 
-def embed_lsb1(wav, secret):
-    r, p = wav_rw(wav); bits = t2b(secret)[:len(r)]
-    for i, b in enumerate(bits): r[i] = (r[i] & 0xFE) | int(b)
-    return to_wav(r, p)
-
-
-def embed_lsb4(wav, secret):
-    r, p = wav_rw(wav); bits = t2b(secret)
-    for i in range(0, min(len(bits), len(r)*4), 4):
-        idx = i // 4
-        if idx >= len(r): break
-        r[idx] = (r[idx] & 0xF0) | int(bits[i:i+4].ljust(4,"0"), 2)
-    return to_wav(r, p)
-
-
-def embed_hash(wav, secret, key="lab_key_2024"):
-    r, p = wav_rw(wav); n = len(r)
-    rng = random.Random(int(hashlib.sha256(key.encode()).hexdigest(), 16))
-    pos = list(range(n)); rng.shuffle(pos)
-    bits = t2b(secret)
+def embed_full_lsb1(wav, payload):
+    """Full sequential LSB — cycles payload to fill entire file. chi2 near 0."""
+    r, p = wav_rw(wav)
+    bits = cycled_bits(payload, len(r))
     for i, b in enumerate(bits):
-        if i >= n: break
-        r[pos[i]] = (r[pos[i]] & 0xFE) | int(b)
+        r[i] = (r[i] & 0xFE) | b
+    return to_wav(r, p)
+
+
+def embed_4bit_lsb(wav, payload):
+    """Lower 4-bit nibble embedding with random bytes. chi4 near 0."""
+    r, p = wav_rw(wav)
+    bits = cycled_bits(payload, len(r) * 4)
+    for i in range(0, len(r) * 4, 4):
+        idx = i // 4
+        nib = int("".join(str(b) for b in bits[i:i+4]), 2)
+        r[idx] = (r[idx] & 0xF0) | nib
+    return to_wav(r, p)
+
+
+def embed_adaptive(wav, payload, key="lab_adap_2024", threshold=8000):
+    """Adaptive embedding in high-energy regions only."""
+    r, p = wav_rw(wav)
+    n_s = len(r) // 2
+    eligible = [i*2 for i in range(n_s)
+                if abs(struct.unpack_from("<h", r, i*2)[0]) > threshold]
+    rng = random.Random(int(hashlib.sha256(key.encode()).hexdigest(), 16))
+    rng.shuffle(eligible)
+    bits = cycled_bits(payload, len(eligible))
+    for pos, b in zip(eligible, bits):
+        r[pos] = (r[pos] & 0xFE) | b
     return to_wav(r, p)
 
 
 def make_wavs():
-    print("  [1/4] Generating 4 WAV files...")
-    cover  = generate_cover_wav_bytes()
-    wavs   = {
+    print("  [1/4] Generating 5 WAV files...")
+    cover = generate_cover_wav_bytes()
+    wavs = {
         "lofi_morning.wav" : cover,
-        "lofi_evening.wav" : embed_lsb1(cover, PAYLOAD_LSB1),
-        "lofi_study.wav"   : embed_lsb4(cover, PAYLOAD_LSB4),
-        "lofi_chill.wav"   : embed_hash(cover, PAYLOAD_HASH),
+        "lofi_evening.wav" : embed_full_lsb1(cover, PAYLOAD_EVENING),
+        "lofi_study.wav"   : embed_4bit_lsb(cover,  PAYLOAD_STUDY),
+        "lofi_chill.wav"   : embed_adaptive(cover,   PAYLOAD_CHILL),
+        "noisy_radio.wav"  : make_noisy_radio(),
     }
     for name, data in wavs.items():
         print(f"        {name:25s}  {len(data):>9,} bytes")
