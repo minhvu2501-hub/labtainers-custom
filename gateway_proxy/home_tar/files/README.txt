@@ -1,47 +1,49 @@
 ================================================================================
-  GATEWAY_PROXY  -  Kịch bản: Cổng Mạng Vô Trùng (Content Disarm)
+  GATEWAY_PROXY  -  Lab: Phong Thu LSB Steganography
 ================================================================================
 
-MÔ HÌNH MẠNG
+MO HINH MANG
 -------------
-  fileserver  (10.0.0.10) → phục vụ file lofi_chill.wav (bị nhiễm LSB)
-  gateway_proxy (10.0.0.1) → MÁY NÀY — Squid Proxy + ICAP Scrubber
-  user_pc       (10.0.0.5) → Máy nhân viên tải file qua proxy
+  fileserver    (10.0.0.10) -> chua 4 file WAV (1 sach, 3 bi nhiem)
+  gateway_proxy (10.0.0.1)  -> MAY NAY - phan tich + sanitize
+  user_pc       (10.0.0.5)  -> may nhan vien tai file
 
-NHIỆM VỤ CỦA BẠN (2 bước)
-----------------------------
+NHIEM VU
+--------
+Phan tich cac file WAV tu fileserver va phat hien steganography.
 
-BƯỚC 1: Hoàn thiện ICAP Scrubber
-  $ nano ~/icap_scrubber.py
+BUOC 1: Tai cac file WAV tu fileserver
+  wget http://10.0.0.10/lofi_clean.wav
+  wget http://10.0.0.10/lofi_lsb1.wav
+  wget http://10.0.0.10/lofi_lsb4.wav
+  wget http://10.0.0.10/lofi_hash.wav
 
-  Tìm hàm scrub_wav_lsb() và implement logic sau:
-    - Đọc WAV bytes bằng thư viện wave
-    - Lấy toàn bộ audio frames: raw = bytearray(...)
-    - AND mỗi byte với 0xFE để xóa bit LSB:
-        raw[i] = raw[i] & 0xFE
-    - Ghi lại thành WAV bytes và trả về
+BUOC 2: Phan tich tung file bang icap_scrubber.py
+  python3 icap_scrubber.py lofi_clean.wav
+  python3 icap_scrubber.py lofi_lsb1.wav
+  python3 icap_scrubber.py lofi_lsb4.wav
+  python3 icap_scrubber.py lofi_hash.wav
 
-BƯỚC 2: Khởi động services
-  $ bash ~/start_services.sh
+BUOC 3: Xem ket qua phan tich
+  cat ~/findings.txt
+  ls -lh ~/sanitized.wav
 
-  Script sẽ:
-    - Khởi động ICAP server (port 1344)
-    - Cấu hình và khởi động Squid (port 3128)
+TIEU CHI PASS
+-------------
+  [x] findings.txt chua "WAV_ANALYZED"
+  [x] findings.txt chua "LSB_DETECTED"
+  [x] sanitized.wav ton tai va > 0 bytes
+  [x] bash_history chua "icap_scrubber.py"
 
-KIỂM TRA HOẠT ĐỘNG
--------------------
-  Xem log ICAP:
-    $ tail -f /tmp/icap_scrubber.log
-
-  Kiểm tra Squid:
-    $ sudo squid -N -d 1 -f ~/squid.conf
-
-GỢI Ý KỸ THUẬT
+KY THUAT DETECT
 ---------------
-  Bit LSB là bit thấp nhất (bit 0) của mỗi byte.
-  Kẻ tấn công đã dùng LSB steganography để nhúng C2 payload.
-  Khi ta AND byte với 0xFE (11111110), bit 0 bị đặt về 0.
-  Âm thanh chỉ thay đổi tối thiểu (1 bit/byte) → vẫn nghe được.
-  Nhưng payload của kẻ tấn công bị phá hủy hoàn toàn.
+  1. Entropy thap bat thuong  (<7.5 = suspicious)
+  2. Chi-square LSB < 10      (very uniform = stego indicator)
+  3. 4-bit chi-square < 80    (LSB 4-bit stego)
+  4. Printable ASCII trong LSB extraction (C2=, TOKEN=, powershell...)
 
+GHI CHU
+-------
+  findings.txt   -> ghi vao ~/findings.txt
+  sanitized.wav  -> ghi vao ~/sanitized.wav
 ================================================================================

@@ -2,272 +2,207 @@
 """
 build_windows.py  -  Windows-compatible Lab Builder
 ====================================================
-Chạy script này trên Windows (PowerShell) để:
-  1) Tạo file lofi_chill.wav bị nhiễm LSB
-  2) Đóng gói home.tar cho từng container
-  3) Tạo sys.tar rỗng cho từng container
-  4) Tạo file gateway_content_disarm.tar cuối cùng để upload lên GitHub
+Builds the complete gateway_content_disarm.tar for imodule upload.
 
-Usage:
-  python build_windows.py
+Steps:
+  1) Generate 4 WAV files via gen_lofi_chill logic
+  2) Pack home.tar for each container
+  3) Create empty sys.tar files
+  4) Build final gateway_content_disarm.tar
 
-Output:
-  gateway_content_disarm.tar  (upload lên GitHub để dùng với imodule)
+Usage: python build_windows.py
 """
 
-import tarfile
-import os
-import io
-import wave
-import struct
-import math
-import random
+import tarfile, os, io, wave, struct, math, random, hashlib
 
-# ── Constants ────────────────────────────────────────────────────────
 LAB_NAME = "gateway_content_disarm"
 BASE_DIR  = os.path.dirname(os.path.abspath(__file__))
 
-MAGIC_MARKER = "HIDDEN_CONFIDENTIAL_DATA_BLOCK_"
-SECRET = (MAGIC_MARKER * 600) + "###END###"
+# ── WAV generation (inline copy from gen_lofi_chill.py) ──────────
+
+PAYLOAD_LSB1 = "C2=185.22.10.4:4444" * 300 + "###END###"
+PAYLOAD_LSB4 = ("powershell -enc " + "A" * 200) * 20 + "###END###"
+PAYLOAD_HASH = "TOKEN=ABCD-1234-XYZ" * 300 + "###END###"
 
 
-# ════════════════════════════════════════════════════════════════════
-#  STEP 1: Generate infected lofi_chill.wav
-# ════════════════════════════════════════════════════════════════════
-
-def generate_lofi_wav_bytes(duration=6, sample_rate=44100) -> bytes:
-    """Tạo cover WAV audio dưới dạng bytes."""
-    n_samples = duration * sample_rate
+def generate_cover_wav_bytes():
     rng = random.Random(42)
     frames = []
-    for i in range(n_samples):
-        t = i / sample_rate
-        value = (
-            math.sin(2 * math.pi * 261.63 * t) * 0.40 +
-            math.sin(2 * math.pi * 329.63 * t) * 0.20 +
-            math.sin(2 * math.pi * 392.00 * t) * 0.15 +
-            math.sin(2 * math.pi * 130.81 * t) * 0.10 +
-            rng.uniform(-0.05, 0.05)
-        )
+    for i in range(6 * 44100):
+        t = i / 44100
+        value = (math.sin(2*math.pi*261.63*t)*0.40 +
+                 math.sin(2*math.pi*329.63*t)*0.20 +
+                 math.sin(2*math.pi*392.00*t)*0.15 +
+                 math.sin(2*math.pi*130.81*t)*0.10 +
+                 rng.uniform(-0.05, 0.05))
         sample = int(round(value * 26000 / 2) * 2)
         sample = max(-32768, min(32766, sample))
         if rng.random() < 0.28:
-            sample += 1
-            sample = min(32767, sample)
-        frames.append(struct.pack('<h', sample))
+            sample = min(32767, sample + 1)
+        frames.append(struct.pack("<h", sample))
     buf = io.BytesIO()
-    with wave.open(buf, 'w') as f:
-        f.setnchannels(1)
-        f.setsampwidth(2)
-        f.setframerate(sample_rate)
-        f.writeframes(b''.join(frames))
+    with wave.open(buf, "w") as f:
+        f.setnchannels(1); f.setsampwidth(2); f.setframerate(44100)
+        f.writeframes(b"".join(frames))
     return buf.getvalue()
 
 
-def embed_lsb_1bit(wav_bytes: bytes, secret: str) -> bytes:
-    """Nhúng payload vào bit LSB của WAV audio."""
-    buf = io.BytesIO(wav_bytes)
-    with wave.open(buf, 'rb') as f:
-        params = f.getparams()
-        raw    = bytearray(f.readframes(f.getnframes()))
-
-    bits = ''.join(format(ord(c), '08b') for c in secret)
-    bits = bits[:len(raw)]  # truncate if needed
-
-    for i, bit in enumerate(bits):
-        raw[i] = (raw[i] & 0xFE) | int(bit)
-
-    out = io.BytesIO()
-    with wave.open(out, 'wb') as f:
-        f.setparams(params)
-        f.writeframes(bytes(raw))
-    return out.getvalue()
+def wav_rw(data):
+    buf = io.BytesIO(data)
+    with wave.open(buf, "rb") as f:
+        p = f.getparams(); r = bytearray(f.readframes(f.getnframes()))
+    return r, p
 
 
-def make_infected_wav() -> bytes:
-    print("  [1/4] Generating infected lofi_chill.wav...")
-    clean_bytes    = generate_lofi_wav_bytes()
-    infected_bytes = embed_lsb_1bit(clean_bytes, SECRET)
-    print(f"        WAV size: {len(infected_bytes):,} bytes  |  "
-          f"Payload: {len(SECRET)} chars embedded via LSB")
-    return infected_bytes
-
-
-# ════════════════════════════════════════════════════════════════════
-#  STEP 2: Pack home.tar for each container
-# ════════════════════════════════════════════════════════════════════
-
-def make_empty_tar_bytes() -> bytes:
-    """Tạo tar rỗng (không chứa file nào)."""
+def to_wav(raw, params):
     buf = io.BytesIO()
-    with tarfile.open(fileobj=buf, mode='w') as t:
-        pass
+    with wave.open(buf, "wb") as f:
+        f.setparams(params); f.writeframes(bytes(raw))
     return buf.getvalue()
 
 
-def pack_home_tar(container: str, extra_files: dict = None) -> bytes:
-    """
-    Đóng gói home.tar từ thư mục <container>/home_tar/files/
-    extra_files: {arcname: bytes} - file bổ sung thêm vào tar
-    """
-    files_dir = os.path.join(BASE_DIR, container, "home_tar", "files")
-    buf = io.BytesIO()
-
-    with tarfile.open(fileobj=buf, mode='w') as tar:
-        # Add files from disk
-        if os.path.isdir(files_dir):
-            for fname in os.listdir(files_dir):
-                fpath = os.path.join(files_dir, fname)
-                if os.path.isfile(fpath):
-                    # Force LF line endings for text files
-                    if fname.endswith(('.py', '.sh', '.conf', '.txt', '.config')):
-                        with open(fpath, 'rb') as f:
-                            content = f.read().replace(b'\r\n', b'\n')
-                        info = tarfile.TarInfo(name=fname)
-                        info.size = len(content)
-                        info.mode = 0o755 if fname.endswith('.sh') else 0o644
-                        tar.addfile(info, io.BytesIO(content))
-                    else:
-                        tar.add(fpath, arcname=fname)
-
-        # Add extra files (e.g., generated WAV)
-        if extra_files:
-            for arcname, data in extra_files.items():
-                info = tarfile.TarInfo(name=arcname)
-                info.size = len(data)
-                info.mode = 0o644
-                tar.addfile(info, io.BytesIO(data))
-
-    return buf.getvalue()
+def t2b(text): return "".join(format(ord(c), "08b") for c in text)
 
 
-# ════════════════════════════════════════════════════════════════════
-#  STEP 3: Build the final lab tar
-# ════════════════════════════════════════════════════════════════════
+def embed_lsb1(wav, secret):
+    r, p = wav_rw(wav); bits = t2b(secret)[:len(r)]
+    for i, b in enumerate(bits): r[i] = (r[i] & 0xFE) | int(b)
+    return to_wav(r, p)
 
-def add_bytes_to_tar(tar: tarfile.TarFile, arcpath: str, data: bytes,
-                     mode: int = 0o644):
-    """Thêm bytes data vào tar với path cho trước."""
+
+def embed_lsb4(wav, secret):
+    r, p = wav_rw(wav); bits = t2b(secret)
+    for i in range(0, min(len(bits), len(r)*4), 4):
+        idx = i // 4
+        if idx >= len(r): break
+        r[idx] = (r[idx] & 0xF0) | int(bits[i:i+4].ljust(4,"0"), 2)
+    return to_wav(r, p)
+
+
+def embed_hash(wav, secret, key="lab_key_2024"):
+    r, p = wav_rw(wav); n = len(r)
+    rng = random.Random(int(hashlib.sha256(key.encode()).hexdigest(), 16))
+    pos = list(range(n)); rng.shuffle(pos)
+    bits = t2b(secret)
+    for i, b in enumerate(bits):
+        if i >= n: break
+        r[pos[i]] = (r[pos[i]] & 0xFE) | int(b)
+    return to_wav(r, p)
+
+
+def make_wavs():
+    print("  [1/4] Generating 4 WAV files...")
+    cover  = generate_cover_wav_bytes()
+    wavs   = {
+        "lofi_clean.wav" : cover,
+        "lofi_lsb1.wav"  : embed_lsb1(cover, PAYLOAD_LSB1),
+        "lofi_lsb4.wav"  : embed_lsb4(cover, PAYLOAD_LSB4),
+        "lofi_hash.wav"  : embed_hash(cover, PAYLOAD_HASH),
+    }
+    for name, data in wavs.items():
+        print(f"        {name:25s}  {len(data):>9,} bytes")
+    return wavs
+
+
+# ── Tar helpers ───────────────────────────────────────────────────
+
+def add_bytes(tar, arcpath, data, mode=0o644):
     info = tarfile.TarInfo(name=arcpath)
-    info.size = len(data)
-    info.mode = mode
+    info.size = len(data); info.mode = mode
     tar.addfile(info, io.BytesIO(data))
 
 
-def add_file_to_tar(tar: tarfile.TarFile, arcpath: str, disk_path: str,
-                    force_lf: bool = True, mode: int = None):
-    """Thêm file từ disk vào tar, tùy chọn convert CRLF→LF."""
-    with open(disk_path, 'rb') as f:
+def add_file(tar, arcpath, disk_path, force_lf=True):
+    with open(disk_path, "rb") as f:
         content = f.read()
     if force_lf:
-        content = content.replace(b'\r\n', b'\n')
-    info = tarfile.TarInfo(name=arcpath)
-    info.size = len(content)
-    if mode is not None:
-        info.mode = mode
-    elif disk_path.endswith('.sh'):
-        info.mode = 0o755
-    else:
-        info.mode = 0o644
-    tar.addfile(info, io.BytesIO(content))
+        content = content.replace(b"\r\n", b"\n")
+    mode = 0o755 if disk_path.endswith(".sh") else 0o644
+    add_bytes(tar, arcpath, content, mode)
 
 
-def build_lab_tar(infected_wav: bytes):
-    """Build the complete lab tar file."""
-    print("  [2/4] Packing home.tar files...")
-
-    # Pack home.tar for each container
-    home_tars = {}
-
-    # gateway_proxy: standard files
-    home_tars['gateway_proxy'] = pack_home_tar('gateway_proxy')
-    print("        gateway_proxy/home_tar/home.tar  OK")
-
-    # user_pc: standard files
-    home_tars['user_pc'] = pack_home_tar('user_pc')
-    print("        user_pc/home_tar/home.tar        OK")
-
-    # fileserver: standard files + infected WAV
-    home_tars['fileserver'] = pack_home_tar('fileserver',
-                                             extra_files={'lofi_chill.wav': infected_wav})
-    print("        fileserver/home_tar/home.tar     OK  (+ lofi_chill.wav)")
-
-    empty_sys = make_empty_tar_bytes()
-
-    print("  [3/4] Building final gateway_content_disarm.tar...")
-
-    out_tar_path = os.path.join(BASE_DIR, f"{LAB_NAME}.tar")
-
-    with tarfile.open(out_tar_path, 'w') as tar:
-        lab = LAB_NAME  # prefix all paths
-
-        # ── Walk all source files ──────────────────────────────────
-        for root, dirs, files in os.walk(BASE_DIR):
-            # Skip .git, __pycache__, and generated tars
-            dirs[:] = [d for d in dirs
-                       if d not in ('.git', '__pycache__', 'home_tar')]
-
-            for fname in files:
-                if fname in (f'{LAB_NAME}.tar', 'build_windows.py',
-                             'gen_lofi_chill.py'):
-                    continue
-                if fname.endswith('.pyc'):
-                    continue
-
-                disk_path = os.path.join(root, fname)
-                rel_path  = os.path.relpath(disk_path, BASE_DIR)
-                arc_path  = os.path.join(lab, rel_path).replace('\\', '/')
-
-                is_text = fname.endswith(
-                    ('.py', '.sh', '.conf', '.txt', '.config',
-                     '.list', '.md', 'Dockerfile', 'treataslocal',
-                     'fixlocal.sh'))
-
-                add_file_to_tar(tar, arc_path, disk_path,
-                                force_lf=is_text)
-
-        # ── Add pre-built home.tar files ───────────────────────────
-        for container, tar_bytes in home_tars.items():
-            arc_path = f"{lab}/{container}/home_tar/home.tar"
-            add_bytes_to_tar(tar, arc_path, tar_bytes)
-            print(f"        Added: {arc_path}")
-
-        # ── Add empty sys.tar for each container ───────────────────
-        for container in ('gateway_proxy', 'user_pc', 'fileserver'):
-            arc_path = f"{lab}/{container}/sys_tar/sys.tar"
-            add_bytes_to_tar(tar, arc_path, empty_sys)
-
-        # ── Add lab-level sys tar (required by Labtainer) ─────────
-        add_bytes_to_tar(tar,
-                         f"{lab}/sys_{lab}.tar.gz",
-                         make_empty_tar_bytes())
-        add_bytes_to_tar(tar,
-                         f"{lab}/{lab}.tar.gz",
-                         make_empty_tar_bytes())
-
-    size_mb = os.path.getsize(out_tar_path) / (1024 * 1024)
-    print(f"  [4/4] Done! -> {out_tar_path}  ({size_mb:.2f} MB)")
-    return out_tar_path
+def empty_tar():
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w"): pass
+    return buf.getvalue()
 
 
-# ════════════════════════════════════════════════════════════════════
-#  Main
-# ════════════════════════════════════════════════════════════════════
+def pack_home_tar(container, extra_files=None):
+    files_dir = os.path.join(BASE_DIR, container, "home_tar", "files")
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w") as tar:
+        if os.path.isdir(files_dir):
+            for fname in sorted(os.listdir(files_dir)):
+                fpath = os.path.join(files_dir, fname)
+                if os.path.isfile(fpath):
+                    is_text = fname.endswith((".py",".sh",".conf",".txt",".config"))
+                    add_file(tar, fname, fpath, force_lf=is_text)
+        if extra_files:
+            for name, data in extra_files.items():
+                add_bytes(tar, name, data)
+    return buf.getvalue()
 
-if __name__ == "__main__":
+
+# ── Main build ────────────────────────────────────────────────────
+
+def build():
     print("=" * 60)
     print(f"  Lab Builder: {LAB_NAME}")
     print("=" * 60)
 
-    infected_wav = make_infected_wav()
-    out_path     = build_lab_tar(infected_wav)
+    wavs = make_wavs()
 
+    print("  [2/4] Packing home.tar files...")
+    home_tars = {
+        "gateway_proxy": pack_home_tar("gateway_proxy"),
+        "user_pc"      : pack_home_tar("user_pc"),
+        "fileserver"   : pack_home_tar("fileserver", extra_files=wavs),
+    }
+    for c, data in home_tars.items():
+        print(f"        {c}/home_tar/home.tar  {len(data):>9,} bytes")
+
+    print("  [3/4] Building final tar...")
+    out_path = os.path.join(BASE_DIR, f"{LAB_NAME}.tar")
+    SKIP = {".git", "__pycache__", "home_tar", f"{LAB_NAME}.tar", ".github"}
+    TEXT_EXT = (".py",".sh",".conf",".txt",".config",".list",".md","Dockerfile","treataslocal","fixlocal.sh")
+
+    with tarfile.open(out_path, "w") as tar:
+        lab = LAB_NAME
+        for root, dirs, files in os.walk(BASE_DIR):
+            dirs[:] = [d for d in dirs if d not in SKIP]
+            for fname in files:
+                if fname in (f"{LAB_NAME}.tar","build_windows.py","gen_lofi_chill.py"): continue
+                if fname.endswith(".pyc"): continue
+                disk_path = os.path.join(root, fname)
+                rel       = os.path.relpath(disk_path, BASE_DIR)
+                arc       = os.path.join(lab, rel).replace("\\","/")
+                is_text   = any(fname.endswith(e) for e in TEXT_EXT)
+                add_file(tar, arc, disk_path, force_lf=is_text)
+
+        # Pre-built home.tar
+        for c, data in home_tars.items():
+            add_bytes(tar, f"{lab}/{c}/home_tar/home.tar", data)
+            print(f"        Added: {lab}/{c}/home_tar/home.tar")
+
+        # Empty sys.tar for each container
+        et = empty_tar()
+        for c in ("gateway_proxy","user_pc","fileserver"):
+            add_bytes(tar, f"{lab}/{c}/sys_tar/sys.tar", et)
+
+        # Lab-level placeholders
+        add_bytes(tar, f"{lab}/sys_{lab}.tar.gz", empty_tar())
+        add_bytes(tar, f"{lab}/{lab}.tar.gz",     empty_tar())
+
+    size_mb = os.path.getsize(out_path) / (1024*1024)
+    print(f"  [4/4] Done! -> {out_path}  ({size_mb:.2f} MB)")
     print()
     print("=" * 60)
     print("  BUILD COMPLETE!")
-    print(f"  Output: {out_path}")
-    print()
-    print("  After pushing to GitHub, run on Ubuntu VM:")
-    print(f"  imodule https://raw.githubusercontent.com/minhvu2501-hub/")
-    print(f"          labtainers-custom/main/{LAB_NAME}.tar")
+    print(f"  imodule URL:")
+    print(f"  https://raw.githubusercontent.com/minhvu2501-hub/")
+    print(f"  labtainers-custom/main/{LAB_NAME}.tar")
     print("=" * 60)
+
+
+if __name__ == "__main__":
+    build()
