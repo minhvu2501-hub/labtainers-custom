@@ -1,164 +1,201 @@
 #!/usr/bin/env python3
 """
-gen_lofi_chill.py  -  Lab Asset Generator (INSTRUCTOR ONLY)
-============================================================
-Tao 4 file WAV cho lab gateway_content_disarm:
-  lofi_clean.wav  - file nhac binh thuong (khong payload)
-  lofi_lsb1.wav   - LSB 1-bit: "C2=185.22.10.4:4444"
-  lofi_lsb4.wav   - LSB 4-bit: "powershell -enc <base64>"
-  lofi_hash.wav   - Pseudo-random LSB: "TOKEN=ABCD-1234-XYZ"
-
-Output dir: fileserver/home_tar/files/
+gen_lofi_chill.py  -  Realistic WAV Asset Generator (Instructor only)
+======================================================================
+5 file WAV:
+  lofi_morning.wav  - CLEAN  (cover audio binh thuong)
+  lofi_evening.wav  - EASY   (full sequential LSB, XOR payload → chi2~0)
+  lofi_study.wav    - MEDIUM (4-bit nibble, zlib → chi4~0)
+  lofi_chill.wav    - HARD   (adaptive random in high-energy → partial)
+  noisy_radio.wav   - FALSE POSITIVE (nhieu nhung sach)
 """
 
-import wave
-import struct
-import math
-import random
-import hashlib
-import io
-import os
+import wave, struct, math, random, io, hashlib, zlib, os
 
-# ── Payloads ─────────────────────────────────────────────────────
-PAYLOAD_LSB1 = "C2=185.22.10.4:4444" * 300 + "###END###"
-PAYLOAD_LSB4 = ("powershell -enc " + "A" * 200) * 20 + "###END###"
-PAYLOAD_HASH = "TOKEN=ABCD-1234-XYZ" * 300 + "###END###"
+OUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                       "fileserver", "home_tar", "files")
 
+# ── XOR encode ────────────────────────────────────────────────────
+def xor(data: bytes, key: bytes) -> bytes:
+    return bytes([b ^ key[i % len(key)] for i, b in enumerate(data)])
 
-# ── Audio generation ─────────────────────────────────────────────
+# ── Payloads (binary encoded — not readable as text) ─────────────
+_KEY1 = b"\x4B\x7A\x3F\x91"
+_KEY2 = b"\xAB\xCD\xEF\x12"
 
-def generate_cover_wav(duration=6, sample_rate=44100) -> bytes:
-    """Lo-fi cover audio with natural LSB bias (not uniform)."""
-    n_samples = duration * sample_rate
-    rng = random.Random(42)
+# Evening: XOR encoded C2 beacon
+_C2   = b"C2=185.22.10.4:4444|interval=60|campaign=APT2024|cmd=whoami"
+PAYLOAD_EVENING = xor(_C2, _KEY1)  # short template, will be cycled
+
+# Study: seeded pseudo-random binary blob -> uniform nibble distribution -> chi4~0
+_rng_study = random.Random(0xDEADBEEF)
+PAYLOAD_STUDY = bytes([_rng_study.randint(0, 255) for _ in range(10000)])
+
+# Chill: XOR encoded token
+_TOK  = b"API_TOKEN=XyZ-9a2b-Kp7q|sig=0xDEADBEEF|exp=2099"
+PAYLOAD_CHILL   = xor(_TOK, _KEY2)
+
+# ── Audio generation ──────────────────────────────────────────────
+
+def make_cover(seed=42, sr=44100, dur=6) -> bytes:
+    """Lo-fi mono 16-bit WAV with natural LSB bias (~60% zeros)."""
+    rng = random.Random(seed)
     frames = []
-    for i in range(n_samples):
-        t = i / sample_rate
-        value = (
-            math.sin(2 * math.pi * 261.63 * t) * 0.40 +
-            math.sin(2 * math.pi * 329.63 * t) * 0.20 +
-            math.sin(2 * math.pi * 392.00 * t) * 0.15 +
-            math.sin(2 * math.pi * 130.81 * t) * 0.10 +
-            rng.uniform(-0.05, 0.05)
-        )
-        # Round to even -> LSB=0, flip 28% -> natural bias
-        sample = int(round(value * 26000 / 2) * 2)
-        sample = max(-32768, min(32766, sample))
-        if rng.random() < 0.28:
-            sample += 1
-            sample = min(32767, sample)
-        frames.append(struct.pack("<h", sample))
-
+    for i in range(dur * sr):
+        t = i / sr
+        v = (math.sin(2 * math.pi * 261.63 * t) * 0.40 +
+             math.sin(2 * math.pi * 329.63 * t) * 0.20 +
+             math.sin(2 * math.pi * 392.00 * t) * 0.15 +
+             math.sin(2 * math.pi * 523.25 * t) * 0.08 +
+             rng.gauss(0, 0.04))
+        s = int(round(v * 26000 / 2) * 2)
+        s = max(-32768, min(32766, s))
+        if rng.random() < 0.30:
+            s = min(32767, s + 1)
+        frames.append(struct.pack("<h", s))
     buf = io.BytesIO()
     with wave.open(buf, "w") as f:
-        f.setnchannels(1)
-        f.setsampwidth(2)
-        f.setframerate(sample_rate)
+        f.setnchannels(1); f.setsampwidth(2); f.setframerate(sr)
         f.writeframes(b"".join(frames))
     return buf.getvalue()
 
 
-def wav_bytes_to_raw(wav_bytes):
-    buf = io.BytesIO(wav_bytes)
-    with wave.open(buf, "rb") as f:
-        params = f.getparams()
-        raw    = bytearray(f.readframes(f.getnframes()))
-    return raw, params
-
-
-def raw_to_wav_bytes(raw, params):
+def make_noisy_radio(sr=44100, dur=6) -> bytes:
+    """False positive: hard-clipped distorted audio — clean LSBs."""
+    rng = random.Random(99)
+    frames = []
+    for i in range(dur * sr):
+        t = i / sr
+        v = (math.sin(2 * math.pi * 440.0 * t) * 0.9 +
+             rng.gauss(0, 0.5))
+        v = max(-1.0, min(1.0, v))
+        s = int(v * 32000)
+        # Preserve natural LSB bias via even rounding
+        s = int(round(s / 2) * 2)
+        s = max(-32768, min(32766, s))
+        if rng.random() < 0.31:
+            s = min(32767, s + 1)
+        frames.append(struct.pack("<h", s))
     buf = io.BytesIO()
-    with wave.open(buf, "wb") as f:
-        f.setparams(params)
-        f.writeframes(bytes(raw))
+    with wave.open(buf, "w") as f:
+        f.setnchannels(1); f.setsampwidth(2); f.setframerate(sr)
+        f.writeframes(b"".join(frames))
     return buf.getvalue()
 
 
-def text_to_bits(text):
-    return "".join(format(ord(c), "08b") for c in text)
+# ── Wav helpers ───────────────────────────────────────────────────
+
+def rw(data: bytes):
+    buf = io.BytesIO(data)
+    with wave.open(buf, "rb") as f:
+        p = f.getparams(); r = bytearray(f.readframes(f.getnframes()))
+    return r, p
+
+def tw(raw: bytearray, params) -> bytes:
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as f:
+        f.setparams(params); f.writeframes(bytes(raw))
+    return buf.getvalue()
+
+def to_bits(data: bytes) -> list:
+    return [int(b) for byte in data for b in format(byte, "08b")]
+
+def cycled_bits(payload: bytes, n: int) -> list:
+    """Cycle payload bits to fill n positions."""
+    raw_bits = to_bits(payload)
+    result = []
+    while len(result) < n:
+        result.extend(raw_bits)
+    return result[:n]
 
 
 # ── Embedding methods ─────────────────────────────────────────────
 
-def embed_lsb1(wav_bytes, secret):
-    """1-bit sequential LSB embedding."""
-    raw, params = wav_bytes_to_raw(wav_bytes)
-    bits = text_to_bits(secret)[:len(raw)]
+def embed_full_lsb1(wav: bytes, payload: bytes) -> bytes:
+    """
+    EASY: Full sequential LSB — fills ENTIRE file with cycled payload bits.
+    chi2 → near 0 (50/50 distribution). Printable ratio low (XOR payload).
+    Detection: chi-square primary.
+    """
+    r, p = rw(wav)
+    bits  = cycled_bits(payload, len(r))
     for i, bit in enumerate(bits):
-        raw[i] = (raw[i] & 0xFE) | int(bit)
-    return raw_to_wav_bytes(raw, params)
+        r[i] = (r[i] & 0xFE) | bit
+    return tw(r, p)
 
 
-def embed_lsb4(wav_bytes, secret):
-    """4-bit LSB embedding (lower nibble)."""
-    raw, params = wav_bytes_to_raw(wav_bytes)
-    bits = text_to_bits(secret)
-    for i in range(0, min(len(bits), len(raw) * 4), 4):
-        chunk = bits[i:i + 4].ljust(4, "0")
-        idx   = i // 4
-        if idx >= len(raw):
-            break
-        raw[idx] = (raw[idx] & 0xF0) | int(chunk, 2)
-    return raw_to_wav_bytes(raw, params)
+def embed_4bit_lsb(wav: bytes, payload: bytes) -> bytes:
+    """
+    MEDIUM: Lower 4-bit nibble embedding — fills ~50% of file with zlib blob.
+    chi4 → near 0. chi2 moderate (50% coverage).
+    Detection: 4-bit chi-square primary.
+    """
+    r, p = rw(wav)
+    bits  = cycled_bits(payload, len(r) * 4)  # 4 bits per byte
+    for i in range(0, len(r) * 4, 4):
+        idx     = i // 4
+        nibble  = int("".join(str(b) for b in bits[i:i + 4]), 2)
+        r[idx]  = (r[idx] & 0xF0) | nibble
+    return tw(r, p)
 
 
-def embed_hash(wav_bytes, secret, key="lab_key_2024"):
-    """Pseudo-random LSB embedding using key-seeded PRNG."""
-    raw, params = wav_bytes_to_raw(wav_bytes)
-    n           = len(raw)
-    seed_int    = int(hashlib.sha256(key.encode()).hexdigest(), 16)
-    rng         = random.Random(seed_int)
-    positions   = list(range(n))
-    rng.shuffle(positions)
-    bits = text_to_bits(secret)
-    for i, bit in enumerate(bits):
-        if i >= n:
-            break
-        pos        = positions[i]
-        raw[pos]   = (raw[pos] & 0xFE) | int(bit)
-    return raw_to_wav_bytes(raw, params)
+def embed_adaptive(wav: bytes, payload: bytes,
+                   key: str = "lab_adap_2024",
+                   threshold: int = 8000) -> bytes:
+    """
+    HARD: Embed only in high-energy samples (|sample| > threshold).
+    Avoids statistical flattening in silent regions.
+    ~30-40% coverage → chi2 moderately suspicious.
+    Detection: combination of chi2 + entropy + run-length variance.
+    """
+    r, p  = rw(wav)
+    n_s   = len(r) // 2
+
+    eligible = []
+    for i in range(n_s):
+        sample = struct.unpack_from("<h", r, i * 2)[0]
+        if abs(sample) > threshold:
+            eligible.append(i * 2)      # byte index of low byte
+
+    # Deterministic shuffle with key
+    rng = random.Random(int(hashlib.sha256(key.encode()).hexdigest(), 16))
+    rng.shuffle(eligible)
+
+    bits = cycled_bits(payload, len(eligible))
+    for pos, bit in zip(eligible, bits):
+        r[pos] = (r[pos] & 0xFE) | bit
+    return tw(r, p)
+
+
+# ── Save ──────────────────────────────────────────────────────────
+
+def save(path: str, data: bytes):
+    with open(path, "wb") as f: f.write(data)
+    print(f"  [+] {os.path.basename(path):22s}  {len(data):>9,} bytes")
 
 
 # ── Main ──────────────────────────────────────────────────────────
 
-def save(path, data):
-    with open(path, "wb") as f:
-        f.write(data)
-    size = len(data)
-    print(f"  [+] {os.path.basename(path):25s}  {size:>9,} bytes")
-
-
 if __name__ == "__main__":
-    out_dir = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)),
-        "fileserver", "home_tar", "files"
-    )
-    os.makedirs(out_dir, exist_ok=True)
+    os.makedirs(OUT_DIR, exist_ok=True)
+    print("=" * 60)
+    print("  WAV Asset Generator  -  gateway_content_disarm")
+    print("=" * 60)
+    print(f"  Output: {OUT_DIR}\n")
 
-    print("=" * 55)
-    print("  gateway_content_disarm  -  WAV Asset Generator")
-    print("=" * 55)
-    print(f"  Output: {out_dir}\n")
+    cover = make_cover()
 
-    # 1. Cover audio
-    cover = generate_cover_wav()
-    save(os.path.join(out_dir, "lofi_morning.wav"), cover)
-
-    # 2. LSB 1-bit: C2 beacon
-    lsb1 = embed_lsb1(cover, PAYLOAD_LSB1)
-    save(os.path.join(out_dir, "lofi_evening.wav"), lsb1)
-
-    # 3. LSB 4-bit: PowerShell command
-    lsb4 = embed_lsb4(cover, PAYLOAD_LSB4)
-    save(os.path.join(out_dir, "lofi_study.wav"), lsb4)
-
-    # 4. Hash/pseudo-random: API token
-    lsb_hash = embed_hash(cover, PAYLOAD_HASH)
-    save(os.path.join(out_dir, "lofi_chill.wav"), lsb_hash)
+    save(f"{OUT_DIR}/lofi_morning.wav", cover)
+    save(f"{OUT_DIR}/lofi_evening.wav", embed_full_lsb1(cover, PAYLOAD_EVENING))
+    save(f"{OUT_DIR}/lofi_study.wav",   embed_4bit_lsb(cover,  PAYLOAD_STUDY))
+    save(f"{OUT_DIR}/lofi_chill.wav",   embed_adaptive(cover,  PAYLOAD_CHILL))
+    save(f"{OUT_DIR}/noisy_radio.wav",  make_noisy_radio())
 
     print()
-    print("  PAYLOADS EMBEDDED:")
-    print(f"  lofi_evening.wav -> LSB 1-bit : '{PAYLOAD_LSB1[:30]}...'")
-    print(f"  lofi_study.wav   -> LSB 4-bit : '{PAYLOAD_LSB4[:30]}...'")
-    print(f"  lofi_chill.wav   -> Hash LSB  : '{PAYLOAD_HASH[:30]}...'")
-    print("=" * 55)
+    print("  TECHNIQUE SUMMARY:")
+    print("  lofi_morning.wav  -> CLEAN       (natural cover audio)")
+    print("  lofi_evening.wav  -> EASY        full LSB, XOR encoded   -> chi2~0")
+    print("  lofi_study.wav    -> MEDIUM      4-bit nibble, random    -> chi4~0")
+    print("  lofi_chill.wav    -> HARD        adaptive high-energy    -> partial")
+    print("  noisy_radio.wav   -> FALSE POS   clipped clean audio")
+    print("=" * 60)
