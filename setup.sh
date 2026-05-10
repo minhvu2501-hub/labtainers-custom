@@ -41,6 +41,44 @@ else
     }
 fi
 
+# Build context = thư mục CHA của lab (~/labtainer/trunk/labs/)
+# labdir phải là đường dẫn TƯƠNG ĐỐI để Docker ADD hoạt động đúng
+PARENT_DIR="$(dirname "$LAB_DIR")"
+
+# ── Tạo các file bắt buộc trước khi build ────────────────────────
+prepare_assets() {
+    # sys.tar rỗng cho từng container
+    for c in gateway_proxy user_pc fileserver; do
+        local sys_tar="${LAB_DIR}/${c}/sys_tar/sys.tar"
+        if [ ! -f "$sys_tar" ]; then
+            mkdir -p "${LAB_DIR}/${c}/sys_tar"
+            tar -cf "$sys_tar" -T /dev/null
+            echo "  [+] Created empty sys.tar for ${c}"
+        fi
+
+        # home.tar nếu chưa có
+        local home_tar="${LAB_DIR}/${c}/home_tar/home.tar"
+        if [ ! -f "$home_tar" ]; then
+            mkdir -p "${LAB_DIR}/${c}/home_tar"
+            if [ -d "${LAB_DIR}/${c}/home_tar/files" ]; then
+                tar -cf "$home_tar" -C "${LAB_DIR}/${c}/home_tar/files" .
+                echo "  [+] Packed home.tar for ${c}"
+            else
+                tar -cf "$home_tar" -T /dev/null
+                echo "  [+] Created empty home.tar for ${c}"
+            fi
+        fi
+    done
+
+    # Lab-level tarballs (required by Dockerfiles)
+    [ -f "${LAB_DIR}/sys_${LAB}.tar.gz" ] || \
+        tar -czf "${LAB_DIR}/sys_${LAB}.tar.gz" -T /dev/null && \
+        echo "  [+] Created sys_${LAB}.tar.gz"
+    [ -f "${LAB_DIR}/${LAB}.tar.gz" ] || \
+        tar -czf "${LAB_DIR}/${LAB}.tar.gz" -T /dev/null && \
+        echo "  [+] Created ${LAB}.tar.gz"
+}
+
 # ── Hàm build image ─────────────────────────────────────────────
 build_image() {
     local container="$1"
@@ -48,43 +86,21 @@ build_image() {
     local dockerfile="${LAB_DIR}/dockerfiles/Dockerfile.${LAB}.${container}.student"
 
     echo ""
-    echo "[Build] ${container}  →  ${image_tag}"
+    echo "[Build] ${container}  ->  ${image_tag}"
 
-    if docker images | grep -q "${REG}/${LAB}.${container}"; then
+    if docker images --format "{{.Repository}}" | grep -qx "${REG}/${LAB}.${container}.student"; then
         echo "  [SKIP] Image already exists locally."
         return 0
     fi
 
-    # Cần sys.tar tồn tại (dù rỗng)
-    local sys_tar="${LAB_DIR}/${container}/sys_tar/sys.tar"
-    if [ ! -f "$sys_tar" ]; then
-        mkdir -p "${LAB_DIR}/${container}/sys_tar"
-        tar -cf "$sys_tar" -T /dev/null
-        echo "  Created empty sys.tar"
-    fi
-
-    # Cần home.tar tồn tại
-    local home_tar="${LAB_DIR}/${container}/home_tar/home.tar"
-    if [ ! -f "$home_tar" ]; then
-        mkdir -p "${LAB_DIR}/${container}/home_tar"
-        if [ -d "${LAB_DIR}/${container}/home_tar/files" ]; then
-            tar -cf "$home_tar" -C "${LAB_DIR}/${container}/home_tar/files" .
-        else
-            tar -cf "$home_tar" -T /dev/null
-        fi
-        echo "  Created home.tar"
-    fi
-
-    # Cần lab-level tarballs
-    local sys_lab="${LAB_DIR}/sys_${LAB}.tar.gz"
-    local home_lab="${LAB_DIR}/${LAB}.tar.gz"
-    [ -f "$sys_lab"  ] || tar -czf "$sys_lab"  -T /dev/null
-    [ -f "$home_lab" ] || tar -czf "$home_lab" -T /dev/null
-
+    # ── KEY FIX: build context = PARENT dir, labdir = RELATIVE path ──
+    # Dockerfile: ADD $labdir/$imagedir/sys_tar/sys.tar /
+    # → ADD gateway_content_disarm/gateway_proxy/sys_tar/sys.tar /
+    # → resolved relative to PARENT_DIR (~/labtainer/trunk/labs/) ✓
     docker build \
         --build-arg registry="${REG}" \
         --build-arg lab="${LAB}" \
-        --build-arg labdir="${LAB_DIR}" \
+        --build-arg labdir="${LAB}" \
         --build-arg imagedir="${container}" \
         --build-arg user_name="ubuntu" \
         --build-arg password="ubuntu" \
@@ -92,10 +108,15 @@ build_image() {
         --build-arg version="1.0" \
         -t "${image_tag}" \
         -f "${dockerfile}" \
-        "${LAB_DIR}" \
+        "${PARENT_DIR}" \
         && echo "  [OK] ${image_tag}" \
         || { echo "  [FAIL] Build failed for ${container}"; exit 1; }
 }
+
+# ── Prepare all required asset files ────────────────────────────
+echo ""
+echo "[Prepare] Checking/creating required asset files..."
+prepare_assets
 
 # ── Build all containers ─────────────────────────────────────────
 build_image "gateway_proxy"
