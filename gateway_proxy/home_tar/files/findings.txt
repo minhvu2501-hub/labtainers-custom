@@ -1,3 +1,0 @@
-# findings.txt - WAV Steganography Analysis Results
-# Gateway Content Disarm Lab
-# Run: python3 icap_scrubber.py <file.wav>
