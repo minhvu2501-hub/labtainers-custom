@@ -1,28 +1,19 @@
 #!/usr/bin/env python3
 """
-watermark_extract.py - Trích xuất thủy vân bằng LSB và Phase Coding
-===================================================================
+watermark_extract.py - Trích xuất thủy vân bằng LSB và Phase Coding sử dụng Numpy
+===================================================================================
 Bài thực hành: Thủy vân số bản quyền âm thanh (LSB vs Phase Coding)
 B22DCAT196 - Vũ Lâm Minh (PTIT)
 """
 
 import wave
 import struct
-import math
+import numpy as np
 import sys
 import os
 import argparse
 
 KICH_THUOC_DOAN = 1024
-
-def dft(x):
-    N = len(x)
-    X = []
-    for k in range(N):
-        re = sum(x[n] * math.cos(2 * math.pi * k * n / N) for n in range(N))
-        im = sum(-x[n] * math.sin(2 * math.pi * k * n / N) for n in range(N))
-        X.append((re, im))
-    return X
 
 def doc_wav(ten_file):
     with wave.open(ten_file, 'rb') as f:
@@ -71,13 +62,12 @@ def main():
         for i in range(args.length):
             bits.append(samples[i] & 1)
     else:
-        # Trích xuất Phase Coding (DFT phân đoạn đầu tiên)
-        doan_0 = samples[:KICH_THUOC_DOAN]
-        X0 = dft(doan_0)
+        # Trích xuất Phase Coding (DFT phân đoạn đầu tiên bằng Numpy)
+        doan_0 = np.array(samples[:KICH_THUOC_DOAN], dtype=np.float64)
+        X0 = np.fft.fft(doan_0)
         for idx in range(args.length):
             k = idx + 1
-            re, im = X0[k]
-            pha = math.atan2(im, re)
+            pha = np.angle(X0[k])
             # bit = 0 nếu pha > 0 (gần pi/2), bit = 1 nếu pha < 0 (gần -pi/2)
             bits.append(0 if pha > 0 else 1)
 

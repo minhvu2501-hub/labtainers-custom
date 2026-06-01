@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-watermark_phase_embed.py - Nhúng thủy vân bản quyền bằng Mã hóa pha (Phase Coding)
+watermark_phase_embed.py - Nhúng thủy vân bản quyền bằng Mã hóa pha (Phase Coding) sử dụng Numpy
 ==================================================================================
 Bài thực hành: Thủy vân số bản quyền âm thanh (LSB vs Phase Coding)
 B22DCAT196 - Vũ Lâm Minh (PTIT)
@@ -8,37 +8,11 @@ B22DCAT196 - Vũ Lâm Minh (PTIT)
 
 import wave
 import struct
-import math
+import numpy as np
 import sys
 import os
 
 KICH_THUOC_DOAN = 1024  # Có thể nhúng tối đa 511 bits
-
-def dft(x):
-    N = len(x)
-    X = []
-    for k in range(N):
-        re = sum(x[n] * math.cos(2 * math.pi * k * n / N) for n in range(N))
-        im = sum(-x[n] * math.sin(2 * math.pi * k * n / N) for n in range(N))
-        X.append((re, im))
-    return X
-
-def idft(X):
-    N = len(X)
-    x = []
-    for n in range(N):
-        val = sum(
-            X[k][0] * math.cos(2 * math.pi * k * n / N) -
-            X[k][1] * math.sin(2 * math.pi * k * n / N)
-            for k in range(N)
-        ) / N
-        x.append(val)
-    return x
-
-def bien_do_pha(re, im):
-    bien_do = math.sqrt(re ** 2 + im ** 2)
-    pha = math.atan2(im, re)
-    return bien_do, ph
 
 def doc_wav(ten_file):
     with wave.open(ten_file, 'rb') as f:
@@ -72,56 +46,51 @@ def nhung_pha(samples, bits, L):
     if len(bits) > L // 2 - 1:
         raise ValueError(f"Thủy vân quá dài so với phân đoạn {L}")
 
-    doan_list = [samples[i * L:(i + 1) * L] for i in range(so_doan)]
-    phan_du   = samples[so_doan * L:]
+    # Chuyển mẫu sang numpy array để tính toán nhanh
+    samples_arr = np.array(samples, dtype=np.float64)
+    doan_list = [samples_arr[i * L:(i + 1) * L] for i in range(so_doan)]
+    phan_du   = samples_arr[so_doan * L:]
 
-    dft_list = [dft(doan) for doan in doan_list]
+    # Áp dụng FFT lên tất cả các phân đoạn
+    dft_list = [np.fft.fft(doan) for doan in doan_list]
 
-    bien_do_list = []
-    pha_list     = []
-    for Xk in dft_list:
-        bien_do_k = []
-        pha_k     = []
-        for re, im in Xk:
-            bd = math.sqrt(re ** 2 + im ** 2)
-            ph = math.atan2(im, re)
-            bien_do_k.append(bd)
-            pha_k.append(ph)
-        bien_do_list.append(bien_do_k)
-        pha_list.append(pha_k)
+    # Lấy biên độ và pha
+    bien_do_list = [np.abs(X) for X in dft_list]
+    pha_list     = [np.angle(X) for X in dft_list]
 
+    # Tính chênh lệch pha giữa phân đoạn i và phân đoạn 0
     chenh_lech_pha = []
     for i in range(1, so_doan):
-        delta = [pha_list[i][k] - pha_list[0][k] for k in range(L)]
+        delta = pha_list[i] - pha_list[0]
         chenh_lech_pha.append(delta)
 
-    pha_moi_doan_0 = list(pha_list[0])
+    # Thay đổi pha phân đoạn 0 để giấu tin
+    pha_moi_doan_0 = np.array(pha_list[0])
     for idx, bit in enumerate(bits):
         k = idx + 1
         if bit == 0:
-            pha_moi_doan_0[k] = math.pi / 2
-            pha_moi_doan_0[L - k] = -math.pi / 2
+            pha_moi_doan_0[k] = np.pi / 2
+            pha_moi_doan_0[L - k] = -np.pi / 2
         else:
-            pha_moi_doan_0[k] = -math.pi / 2
-            pha_moi_doan_0[L - k] = math.pi / 2
+            pha_moi_doan_0[k] = -np.pi / 2
+            pha_moi_doan_0[L - k] = np.pi / 2
 
+    # Tính pha mới cho tất cả các phân đoạn sau dựa trên chênh lệch pha ban đầu
     pha_moi_list = [pha_moi_doan_0]
     for i in range(so_doan - 1):
-        pha_moi_k = [pha_moi_doan_0[k] + chenh_lech_pha[i][k] for k in range(L)]
+        pha_moi_k = pha_moi_doan_0 + chenh_lech_pha[i]
         pha_moi_list.append(pha_moi_k)
 
+    # Tái tạo phổ DFT mới
     dft_moi_list = []
     for i in range(so_doan):
-        Xk_moi = []
-        for k in range(L):
-            re = bien_do_list[i][k] * math.cos(pha_moi_list[i][k])
-            im = bien_do_list[i][k] * math.sin(pha_moi_list[i][k])
-            Xk_moi.append((re, im))
-        dft_moi_list.append(Xk_moi)
+        X_moi = bien_do_list[i] * np.exp(1j * pha_moi_list[i])
+        dft_moi_list.append(X_moi)
 
+    # Áp dụng IFFT để chuyển về miền thời gian
     ket_qua = []
-    for Xk_moi in dft_moi_list:
-        doan_moi = idft(Xk_moi)
+    for X_moi in dft_moi_list:
+        doan_moi = np.fft.ifft(X_moi).real
         ket_qua.extend(doan_moi)
 
     ket_qua.extend(phan_du)
@@ -147,7 +116,7 @@ def main():
     print("=" * 60)
     print(f"  Thủy vân    : {watermark}")
     print(f"  Số bit nhúng: {len(bits)} bits")
-    print("  [*] Đang thực hiện DFT & nhúng pha (có thể mất 1-2 giây)...")
+    print("  [*] Đang thực hiện DFT & nhúng pha bằng Numpy...")
 
     try:
         samples_moi = nhung_pha(samples, bits, KICH_THUOC_DOAN)

@@ -1,27 +1,18 @@
 #!/usr/bin/env python3
 """
-evaluate.py - Tính toán tỷ lệ lỗi bit (BER) và đánh giá độ bền bỉ của thủy vân
-============================================================================
+evaluate.py - Tính toán tỷ lệ lỗi bit (BER) và đánh giá độ bền bỉ của thủy vân sử dụng Numpy
+===========================================================================================
 Bài thực hành: Thủy vân số bản quyền âm thanh (LSB vs Phase Coding)
 B22DCAT196 - Vũ Lâm Minh (PTIT)
 """
 
 import wave
 import struct
-import math
+import numpy as np
 import sys
 import os
 
 KICH_THUOC_DOAN = 1024
-
-def dft(x):
-    N = len(x)
-    X = []
-    for k in range(N):
-        re = sum(x[n] * math.cos(2 * math.pi * k * n / N) for n in range(N))
-        im = sum(-x[n] * math.sin(2 * math.pi * k * n / N) for n in range(N))
-        X.append((re, im))
-    return X
 
 def doc_wav(ten_file):
     with wave.open(ten_file, 'rb') as f:
@@ -50,13 +41,12 @@ def trich_xuat_lsb(samples, length):
     return bits
 
 def trich_xuat_phase(samples, length):
-    doan_0 = samples[:KICH_THUOC_DOAN]
-    X0 = dft(doan_0)
+    doan_0 = np.array(samples[:KICH_THUOC_DOAN], dtype=np.float64)
+    X0 = np.fft.fft(doan_0)
     bits = []
     for idx in range(length):
         k = idx + 1
-        re, im = X0[k]
-        pha = math.atan2(im, re)
+        pha = np.angle(X0[k])
         bits.append(0 if pha > 0 else 1)
     return bits
 
