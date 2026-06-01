@@ -1,6 +1,43 @@
 ARG registry
 FROM $registry/labtainer.base2
+
+ARG lab
+ARG labdir
+ARG imagedir
+ARG user_name
+ARG password
+ARG apt_source
+ARG version
+LABEL version=$version
+ENV APT_SOURCE $apt_source
+RUN /usr/bin/apt-source.sh
+RUN sed -i 's/http:/https:/g' /etc/apt/sources.list
+
+# Cài đặt Python và các thư viện số
+RUN apt-get update -y && apt-get install -y --no-install-recommends \
+    python3 \
+    python3-pip \
+    python3-numpy \
+    python3-scipy \
+    && rm -rf /var/lib/apt/lists/*
+
+# Thêm file hệ thống
+ADD $labdir/$imagedir/sys_tar/sys.tar /
+ADD $labdir/sys_$lab.tar.gz /
+
+# Tạo user sinh viên
+RUN useradd -ms /bin/bash $user_name
+RUN echo "$user_name:$password" | chpasswd
+RUN adduser $user_name sudo
+
+# Chuyển sang user và thêm file thực hành
+USER $user_name
+ENV HOME /home/$user_name
+
+ADD $labdir/$imagedir/home_tar/home.tar $HOME
+RUN rm -f $HOME/home.tar
+ADD $labdir/$lab.tar.gz $HOME
+
+# Khởi động container
 USER root
-RUN apt-get update && apt-get install -y python3 python3-pip
-RUN pip3 install numpy scipy
-USER ubuntu
+CMD ["/bin/bash", "-c", "exec /sbin/init --log-target=journal 3>&1"]
