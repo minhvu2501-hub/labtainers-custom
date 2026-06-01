@@ -178,12 +178,7 @@ def print_hints():
 # ──────────────────────────────────────────────
 
 def main():
-    default_files = [
-      "files/audio_A.wav",
-      "files/audio_B.wav",
-      "files/audio_C.wav",
-      "files/audio_D.wav"
-    ]
+    default_files = ["audio_A.wav", "audio_B.wav", "audio_C.wav", "audio_D.wav"]
 
     args = sys.argv[1:]
     compare_only = "--compare" in args

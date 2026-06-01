@@ -1,12 +1,6 @@
-# answers.txt  -  Điền câu trả lời của bạn vào đây
-#
-# Sau khi phân tích 4 file âm thanh (audio_A.wav, audio_B.wav, audio_C.wav, audio_D.wav),
-# hãy xác định file nào tương ứng với từng loại và điền vào bên dưới.
-#
-# Ví dụ: nếu bạn nghĩ audio_C là file gốc thì điền: original=audio_C
-#
-# KHÔNG thay đổi tên key (phần bên trái dấu =)
-# CHỈ thay đổi giá trị (audio_A / audio_B / audio_C / audio_D)
+# answers.txt - Fill in your answers below
+# Identify each WAV file and enter the label (audio_A, audio_B, audio_C, or audio_D)
+# Do NOT change the keys on the left side of =
 
 original=
 lsb1bit=

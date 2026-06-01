@@ -40,18 +40,10 @@ RUN adduser $user_name sudo
 USER $user_name
 ENV HOME /home/$user_name
 
-WORKDIR /home/$user_name
-
-RUN touch $HOME/.bash_history && \
-    chmod 666 $HOME/.bash_history
 ADD $labdir/$imagedir/home_tar/home.tar $HOME
 RUN rm -f $HOME/home.tar
 ADD $labdir/$lab.tar.gz $HOME
 
-RUN echo 'export HISTFILE=~/.bash_history' >> $HOME/.bashrc && \
-    echo 'export PROMPT_COMMAND="history -a"' >> $HOME/.bashrc
-RUN echo 'export HISTFILE=$HOME/.bash_history' >> /home/$user_name/.bashrc && \
-    echo 'export PROMPT_COMMAND="history -a"' >> /home/$user_name/.bashrc
 # ── Startup ──────────────────────────────────────────────────────
 USER root
 CMD ["/bin/bash", "-c", "exec /sbin/init --log-target=journal 3>&1"]
