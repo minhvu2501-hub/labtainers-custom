@@ -41,3 +41,4 @@ answers_file="$homedir/$destdir/answers.txt"
 if [[ -f "$answers_file" ]]; then
     sed -i 's/ //g' "$answers_file"   # remove all spaces
 fi
+exit 0
