@@ -1,0 +1,4 @@
+Huong dan:
+1. Chay  python3 gen_cover.py  de tao file am thanh cover.wav
+2. Nhung thuy van bang LSB va Phase Coding
+3. Mô phong tan cong va danh gia BER.

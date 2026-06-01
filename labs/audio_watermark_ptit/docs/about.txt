@@ -1,0 +1,6 @@
+Bài thực hành: Thủy vân số bản quyền âm thanh (Copyright Watermarking)
+
+Sinh viên thực hiện:
+- Nhúng chữ ký bản quyền bằng 2 phương pháp: LSB (Fragile) và Phase Coding (Robust).
+- Mô phỏng các cuộc tấn công phá hủy bản quyền (thay đổi âm lượng và cộng nhiễu).
+- Trích xuất lại thủy vân và tính tỷ lệ lỗi bit (Bit Error Rate - BER) để chứng minh độ bền bỉ vượt trội của Phase Coding.
