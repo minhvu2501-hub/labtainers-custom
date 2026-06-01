@@ -1,0 +1,7 @@
+Bài thực hành: Giấu tin LSB Replacement vs LSB Matching & Tấn công Chi-Square Steganalysis
+
+Sinh viên sẽ thực hành các nội dung sau:
+- Nhúng và trích xuất tin mật bằng LSB Replacement truyền thống.
+- Nhúng và trích xuất tin mật bằng LSB Matching (tăng/giảm mẫu ngẫu nhiên ±1) để tránh làm méo mó các đặc trưng thống kê.
+- Sử dụng phương pháp tấn công thống kê Chi-Square (PoVs) để phát hiện sự tồn tại của dữ liệu ẩn trên cả hai phương pháp.
+- Đánh giá chỉ số sai số âm thanh (MSE, PSNR, SNR) và xác suất phát hiện của mỗi thuật toán.

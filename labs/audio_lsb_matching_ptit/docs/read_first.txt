@@ -1,0 +1,4 @@
+Huong dan chi tiet cac buoc thực hanh nam trong tai lieu lab.
+Truoc tien hay chay lenh:
+   python3 gen_cover.py
+de tao am thanh nen.
