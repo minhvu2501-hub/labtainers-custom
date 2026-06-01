@@ -1,0 +1,7 @@
+HƯỚNG DẪN: Chạy lệnh so sánh phổ biên độ và pha:
+    python3 compare.py -i cover.wav -s stego.wav -n 512
+
+Hãy điền thông số thu được vào đây:
+Độ lệch biên độ trung bình (MAE Magnitude) = 
+Độ lệch pha trung bình (MAE Phase) = 
+Nhận xét về sự thay đổi của phổ biên độ so với phổ pha:

@@ -1,0 +1,10 @@
+Hướng dẫn bài thực hành nằm tại:
+   file://LAB_DOCS/audio_phase_ptit.pdf
+
+Bạn có thể mở bằng cách nhấp chuột phải
+và chọn "Open Link".
+
+===========================================
+Bài thực hành: Kỹ thuật giấu tin bằng mã hóa pha (Phase Coding)
+Học viện Công nghệ Bưu chính Viễn thông (PTIT)
+===========================================

@@ -1,0 +1,8 @@
+HƯỚNG DẪN: Chạy lệnh sau để ghi kết quả vào đây:
+    python3 evaluate.py -c cover.wav -s stego.wav -o ketqua.txt
+
+Hoặc ghi tay sau khi chạy evaluate.py:
+MSE  = 
+PSNR = 
+SNR  = 
+Nhận xét:
