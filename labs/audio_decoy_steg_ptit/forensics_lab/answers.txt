@@ -1,4 +1,4 @@
-# Điền các flag bạn tìm được vào đây:
-# Lưu ý: Hệ thống chấm điểm Labtainers sẽ tự động kiểm tra đáp án của bạn
-decoy_flag=
+# Điền flag thật bạn tìm được vào đây:
+# Gợi ý: Dùng phase_extract.py để trích xuất flag thật từ stego_audio.wav
+# Lưu ý: Hệ thống chấm điểm sẽ tự động kiểm tra đáp án
 real_flag=
