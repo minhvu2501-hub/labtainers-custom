@@ -1,0 +1,13 @@
+BÀI LAB CTF: DOUBLE-LAYER DECOY STEGANOGRAPHY
+(Tác giả: minh1612)
+
+Bài lab này mô phỏng một kịch bản Hacker & Forensics thực tế với 2 máy tính (2 Terminal):
+- suspect_pc (Máy kẻ tình nghi): Nơi thực hiện giấu tin 2 lớp. Sử dụng LSB làm bẫy mồi nhử (Decoy Flag), sau đó giấu đè thông điệp thật (Real Flag) bằng Phase Coding.
+- forensics_lab (Phòng điều tra): Phân tích file âm thanh nhận được từ nghi phạm, vượt qua cái bẫy LSB dễ dàng tìm thấy để lôi ra thông điệp Phase Coding ẩn sâu bên dưới.
+
+Kiến thức đạt được:
+- Kỹ năng kết hợp nhiều kỹ thuật giấu tin (Audio Steganography) trên cùng một file (Stego within Stego).
+- Nâng cao tư duy giải quyết vấn đề trong CTF (Rabbit Hole): Không tin vào các cờ quá dễ dàng tìm được (Decoy Flag).
+- Thành thạo sử dụng mạng cơ bản (mở HTTP server, dùng wget chuyển file giữa các container ảo).
+
+Chúc bạn chơi CTF vui vẻ!
