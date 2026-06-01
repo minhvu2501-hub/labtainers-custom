@@ -1,0 +1,17 @@
+Gateway Content Disarm and Reconstruction (CDR) lab focused on detecting and sanitizing steganographic payloads hidden inside WAV audio files.
+
+Students operate a defensive gateway proxy that intercepts audio downloads between a user workstation and a file server. The gateway analyzes suspicious WAV files, generates security scan reports, and forwards sanitized content to the user.
+
+Concepts covered:
+- Audio steganography
+- LSB embedding detection
+- Defensive gateway engineering
+- Content Disarm and Reconstruction (CDR)
+- Secure proxy workflow
+- SOC-style inspection pipeline
+- Automated incident reporting
+
+Containers:
+- user_pc
+- gateway_proxy
+- file_server

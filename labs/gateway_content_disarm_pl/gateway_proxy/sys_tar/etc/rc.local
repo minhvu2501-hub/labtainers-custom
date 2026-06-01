@@ -1,0 +1,3 @@
+#!/bin/bash
+python3 /home/ubuntu/icap_scrubber.py &
+exit 0
