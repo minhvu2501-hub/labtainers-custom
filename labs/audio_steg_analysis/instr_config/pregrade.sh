@@ -17,8 +17,9 @@ END
 #
 homedir=$1
 destdir=$2
-dbg=/tmp/pregrade.log
 cd $homedir/$destdir
+exec > pregrade.log 2>&1
+set -x
 
 is_sqlite=`which sqlite3`
 if [ ! -z $is_sqlite ]; then
